@@ -127,19 +127,18 @@ struct Camera {
         fs.release();
 
         /* 初始化弹道参数 */
-        std::deque<cv::Point2f> disToY;
+        std::deque<cv::Point3f> disToY;
         for (auto &_pts : armor::stConfig.get<toml::Array>("curve.dy")) {
             std::vector<toml::Value> a = _pts.as<std::vector<toml::Value>>();
-            cv::Point2f pt = cv::Point2f(a[0].asNumber(), a[1].asNumber());
+            cv::Point3f pt = cv::Point3f(a[0].asNumber(), a[1].asNumber(), a[2].asNumber());
             disToY.emplace_back(pt);
         }
         /* 多项式曲线拟合 */
         curveFit(disToY, 2, m_ABC_y);
-
-        std::deque<cv::Point2f> disToX;
+        std::deque<cv::Point3f> disToX;
         for (auto &_pts : armor::stConfig.get<toml::Array>("curve.dx")) {
             std::vector<toml::Value> a = _pts.as<std::vector<toml::Value>>();
-            cv::Point2f pt = cv::Point2f(a[0].asNumber(), a[1].asNumber());
+            cv::Point3f pt = cv::Point2f(a[0].asNumber(), a[1].asNumber(), a[2].asNumber());
             disToX.emplace_back(pt);
         }
         /* 多项式曲线拟合 */
@@ -155,17 +154,20 @@ struct Camera {
      * @param ABC 拟合结果
      * 多项式曲线拟合
      */
-    static void curveFit(std::deque<cv::Point2f> &disToY, int degree, cv::Mat &ABC) {
+    static void curveFit(std::deque<cv::Point3f> &disToY, int degree, cv::Mat &ABC) {
         size_t funNum = disToY.size();
-        cv::Mat Left = cv::Mat::zeros(funNum, degree + 1, CV_32F);
+        cv::Mat Left = cv::Mat::zeros(funNum, 6, CV_32F);
         cv::Mat Right = cv::Mat::ones(funNum, 1, CV_32F);
+        int n = 0;
         for (size_t i = 0; i < funNum; ++i) {
             for (size_t j = 0; j < degree + 1; ++j) {
-                Left.at<float>(i, j) += cv::pow(disToY[i].x, degree - j);
+                for (size_t k = 0; k <= j; ++k) {
+                    Left.at<float>(i, n++) += cv::pow(disToY[i].x, degree - j) * cv::pow(disToY[i].y, k);
+                }
+                Right.at<float>(i, 0) = disToY[i].z;
             }
-            Right.at<float>(i, 0) = disToY[i].y;
+            cv::solve(Left, Right, ABC, cv::DECOMP_SVD);
         }
-        cv::solve(Left, Right, ABC, cv::DECOMP_SVD);
     }
 
     /**
@@ -194,417 +196,415 @@ struct Camera {
             newPts.z = pts.z;
         } else {
             /* 使用二次形拟合 */
-            newPts.x = pts.x + m_ABC_x.at<float>(0, 0) * pts.z * pts.z +
-                       m_ABC_x.at<float>(1, 0) * pts.z + m_ABC_x.at<float>(2, 0);
-            newPts.y = pts.y + m_ABC_y.at<float>(0, 0) * pts.z * pts.z +
-                       m_ABC_y.at<float>(1, 0) * pts.z + m_ABC_y.at<float>(2, 0);
+            newPts.x = pts.x + newPts.y = pts.y + m_ABC_x.at<float>(0, 0) * pts.y * m_ABC_x.at<float>(1, 0) * pts.y + m_ABC_x.at<float>(2, 0) * pts.y * pts.z +
+                                          m_ABC_x.at<float>(3, 0) + m_ABC_x.at<float> m_ABC_x.at<float>(0, 0) * pts.z * pts.z;
+            newPts.y = pts.y + m_ABC_y.at<float>(0, 0) * pts.y * pts.y +
+                       m_ABC_y.at<float>(1, 0) * pts.y + m_ABC_y.at<float>(2, 0) * pts.y * pts.z +
+                       m_ABC_y.at<float>(3, 0) + m_ABC_y.at<float>(4, 0) * pts.z +
+                       m_ABC_y.at<float>(0, 0) * pts.z * pts.z;
             newPts.z = pts.z;
         }
     }
-} stCamera("../data/camera6mm.xml");
+    stCamera("../data/camera6mm.xml");
 
-// TODO: 测量, 实际检测灯长度不是55mm
-/**
- * 装甲板物理参数
- */
-struct
-{
+    // TODO: 测量, 实际检测灯长度不是55mm
     /**
-     * x - Right
-     * y - Up
-     * z - Forward
+     * 装甲板物理参数
      */
-    // 仅灯条矩形
-    std::vector<cv::Point3d> smallFig3f = {cv::Point3d(0, 0, 0), cv::Point3d(0, -55, 0), cv::Point3d(135, -55, 0), cv::Point3d(135, 0, 0)};
-    std::vector<cv::Point3d> largeFig3f = {cv::Point3d(0, 0, 0), cv::Point3d(0, -55, 0), cv::Point3d(230, -55, 0), cv::Point3d(230, 0, 0)};
-    // 扩展区域
-    std::vector<cv::Point2f> smallFig_Ex = {cv::Point2f(0, 0), cv::Point2f(0, 126), cv::Point2f(135, 126), cv::Point2f(135, 0)};
-    std::vector<cv::Point2f> largeFig_Ex = {cv::Point2f(0, 0), cv::Point2f(0, 126), cv::Point2f(230, 126), cv::Point2f(230, 0)};
-    //
-    cv::Mat smallShootPosition = cv::Mat(cv::Point3d(67.5, -27.5, 0.0));
-} stArmorStdFigure;
-
-/**
- * 灯条结构体
- */
-struct Light {
-    cv::Point2f topPt;
-    cv::Point2f bottomPt;
-    cv::Point2f centerPt;
-    double angle = 0;
-    double length = 0;
-};
-
-typedef enum {
-    TARGET_SMALL,
-    TARGET_LARGE
-} emTargetType;
-
-/**
- */
-struct Target {
-    std::vector<cv::Point2f> pixelPts2f;     // 硬件ROI图幅下的像素坐标
-    cv::Point2f pixelCenterPt2f;             // 像素坐标中心
-    std::vector<cv::Point2f> pixelPts2f_Ex;  // 扩展像素坐标
-    cv::Point3d ptsInGimbal;                 // 物体在云台坐标系下坐标(相机坐标系经过固定变换后得到)
-    cv::Point3d ptsInWorld;                  // 物体在世界坐标系下坐标
-    cv::Point3d ptsInWorld_Predict;          // 物体在预测后的世界坐标系下坐标, 不开启预测的时候和 ptsInWorld 一样
-    cv::Point3d ptsInGimbal_Predict;         // 物体在预测后的云台坐标系下坐标, 不开启预测的时候和 ptsInGimbal 一样
-    cv::Point3d ptsInShoot;                  // 物体在经过弹道修正后的云台坐标系下坐标
-    float rPitch;                            // 相对Pitch值, 发给电控
-    float rYaw;                              // 相对Yaw值, 发给电控
-    int rTick;                               // 相对帧编号
-    emTargetType type;                       // TARGET_SMALL, TARGET_TARGET
-
-    cv::Mat rv, // 旋转向量
-        tv,     // 偏移向量
-        rvMat;  // 旋转矩阵
-
-    cv::Mat m_rotY, m_rotX;  // 旋转到绝对坐标系
-    cv::Point3d vInGimbal3d;
-
-    explicit Target() : rPitch(0), rYaw(0), rTick(0), type(TARGET_SMALL) {}
-
-    Target(const Target&) = default;
-
-    Target operator=(const Target& t) {
-        this->pixelPts2f = t.pixelPts2f;    
-        this->pixelCenterPt2f = t.pixelCenterPt2f;            
-        this->pixelPts2f_Ex = t.pixelPts2f_Ex; 
-        this->ptsInGimbal = t.ptsInGimbal;                
-        this->ptsInWorld = t.ptsInWorld;                 
-        this->ptsInWorld_Predict = t.ptsInWorld_Predict;         
-        this->ptsInGimbal_Predict = t.ptsInGimbal_Predict;        
-        this->ptsInShoot = t.ptsInShoot;                 
-        this->rPitch = t.rPitch;                           
-        this->rYaw = t.rYaw;                             
-        this->rTick = t.rTick;                              
-        this->type = t.type;                      
-        this->rv = t.rv;
-        this->tv = t.tv;
-        this->rvMat = t.rvMat;
-        this->m_rotY = t.m_rotY;
-        this->m_rotX = t.m_rotX;
-        this->vInGimbal3d = t.vInGimbal3d;
-        return *this;
-    }
+    struct
+    {
+        /**
+         * x - Right
+         * y - Up
+         * z - Forward
+         */
+        // 仅灯条矩形
+        std::vector<cv::Point3d> smallFig3f = {cv::Point3d(0, 0, 0), cv::Point3d(0, -55, 0), cv::Point3d(135, -55, 0), cv::Point3d(135, 0, 0)};
+        std::vector<cv::Point3d> largeFig3f = {cv::Point3d(0, 0, 0), cv::Point3d(0, -55, 0), cv::Point3d(230, -55, 0), cv::Point3d(230, 0, 0)};
+        // 扩展区域
+        std::vector<cv::Point2f> smallFig_Ex = {cv::Point2f(0, 0), cv::Point2f(0, 126), cv::Point2f(135, 126), cv::Point2f(135, 0)};
+        std::vector<cv::Point2f> largeFig_Ex = {cv::Point2f(0, 0), cv::Point2f(0, 126), cv::Point2f(230, 126), cv::Point2f(230, 0)};
+        //
+        cv::Mat smallShootPosition = cv::Mat(cv::Point3d(67.5, -27.5, 0.0));
+    } stArmorStdFigure;
 
     /**
-     * 移动构造函数
-     * @param t 
+     * 灯条结构体
      */
-    Target(Target &&t) : rPitch(t.rPitch), rYaw(t.rYaw), rTick(t.rTick), type(t.type),
-                         pixelPts2f(std::move(t.pixelPts2f)),
-                         pixelCenterPt2f(std::move(t.pixelCenterPt2f)),
-                         pixelPts2f_Ex(std::move(t.pixelPts2f_Ex)),
-                         ptsInGimbal(std::move(t.ptsInGimbal)),
-                         ptsInWorld(std::move(t.ptsInWorld)),
-                         ptsInWorld_Predict(std::move(t.ptsInWorld_Predict)),
-                         ptsInGimbal_Predict(std::move(t.ptsInGimbal_Predict)),
-                         ptsInShoot(std::move(t.ptsInShoot)),
-                         rv(std::move(t.rv)), tv(std::move(t.tv)), rvMat(std::move(t.rvMat)),
-                         m_rotY(std::move(t.m_rotY)), m_rotX(std::move(t.m_rotX)), vInGimbal3d(std::move(t.vInGimbal3d)) {}
+    struct Light {
+        cv::Point2f topPt;
+        cv::Point2f bottomPt;
+        cv::Point2f centerPt;
+        double angle = 0;
+        double length = 0;
+    };
 
-    /**
-     * @param a 左上（从左上开始顺时针设置）
-     * @param b 左下
-     * @param c 右下
-     * @param d 右上
-     * @param startPt 开小图模式下的偏移量
-     * 设置硬件ROI图幅下的像素坐标,计算ROI像素中心点坐标
-     */
-    void setPixelPts(const cv::Point2f &a, const cv::Point2f &b, const cv::Point2f &c, const cv::Point2f &d, const cv::Point2i &startPt) {
-        cv::Point2f startPt2f = cv::Point2f(startPt);
-        //计算硬件ROI图幅下的像素坐标
-        pixelPts2f = std::vector<cv::Point2f>{a + startPt2f, b + startPt2f, c + startPt2f, d + startPt2f};
-        //逐个遍历，将像素坐标累积求和
-        for (const auto &pt : pixelPts2f) {
-            pixelCenterPt2f += pt;
+    typedef enum {
+        TARGET_SMALL,
+        TARGET_LARGE
+    } emTargetType;
+
+    struct Target {
+        std::vector<cv::Point2f> pixelPts2f;     // 硬件ROI图幅下的像素坐标
+        cv::Point2f pixelCenterPt2f;             // 像素坐标中心
+        std::vector<cv::Point2f> pixelPts2f_Ex;  // 扩展像素坐标
+        cv::Point3d ptsInGimbal;                 // 物体在云台坐标系下坐标(相机坐标系经过固定变换后得到)
+        cv::Point3d ptsInWorld;                  // 物体在世界坐标系下坐标
+        cv::Point3d ptsInWorld_Predict;          // 物体在预测后的世界坐标系下坐标, 不开启预测的时候和 ptsInWorld 一样
+        cv::Point3d ptsInGimbal_Predict;         // 物体在预测后的云台坐标系下坐标, 不开启预测的时候和 ptsInGimbal 一样
+        cv::Point3d ptsInShoot;                  // 物体在经过弹道修正后的云台坐标系下坐标
+        float rPitch;                            // 相对Pitch值, 发给电控
+        float rYaw;                              // 相对Yaw值, 发给电控
+        int rTick;                               // 相对帧编号
+        emTargetType type;                       // TARGET_SMALL, TARGET_TARGET
+
+        cv::Mat rv,  // 旋转向量
+            tv,      // 偏移向量
+            rvMat;   // 旋转矩阵
+
+        cv::Mat m_rotY, m_rotX;  // 旋转到绝对坐标系
+        cv::Point3d vInGimbal3d;
+
+        explicit Target() : rPitch(0), rYaw(0), rTick(0), type(TARGET_SMALL) {}
+
+        Target(const Target &) = default;
+
+        Target operator=(const Target &t) {
+            this->pixelPts2f = t.pixelPts2f;
+            this->pixelCenterPt2f = t.pixelCenterPt2f;
+            this->pixelPts2f_Ex = t.pixelPts2f_Ex;
+            this->ptsInGimbal = t.ptsInGimbal;
+            this->ptsInWorld = t.ptsInWorld;
+            this->ptsInWorld_Predict = t.ptsInWorld_Predict;
+            this->ptsInGimbal_Predict = t.ptsInGimbal_Predict;
+            this->ptsInShoot = t.ptsInShoot;
+            this->rPitch = t.rPitch;
+            this->rYaw = t.rYaw;
+            this->rTick = t.rTick;
+            this->type = t.type;
+            this->rv = t.rv;
+            this->tv = t.tv;
+            this->rvMat = t.rvMat;
+            this->m_rotY = t.m_rotY;
+            this->m_rotX = t.m_rotX;
+            this->vInGimbal3d = t.vInGimbal3d;
+            return *this;
         }
-        //像素坐标和/坐标数=像素中心点坐标
-        pixelCenterPt2f /= int(pixelPts2f.size());
-    }
-
-    /**
-     * @return false = 扩展后超过硬件ROI图幅大小
-     * 将灯条拓展，如果拓展后超范围，返回false,否则返回true
-     */
-    bool convert2ExternalPts2f() {
-        //清除掉扩展像素坐标向量的元素，不释放内存
-        pixelPts2f_Ex.clear();
-        cv::Point2f halfDeltaA = (pixelPts2f[0] - pixelPts2f[1]) / 55 * 35;
-        pixelPts2f_Ex.emplace_back(pixelPts2f[0] + halfDeltaA);
-        pixelPts2f_Ex.emplace_back(pixelPts2f[1] - halfDeltaA);
-        cv::Point2f halfDeltaB = (pixelPts2f[3] - pixelPts2f[2]) / 55 * 35;
-        pixelPts2f_Ex.emplace_back(pixelPts2f[2] - halfDeltaB);
-        pixelPts2f_Ex.emplace_back(pixelPts2f[3] + halfDeltaB);
-
-        for (const auto &_pt : pixelPts2f_Ex) {
-            //扩展后像素坐标超过采集的图像的图幅大小
-            if (_pt.x >= stFrameInfo.size.width || _pt.x < 0 || _pt.y >= stFrameInfo.size.height || _pt.y < 0)
-                return false;
-        }
-        return true;
-    }
-
-    /**
-     * 计算云台坐标系坐标
-     * @change ptsInGimbal 目标在云台坐标系下的坐标
-     */
-    void calcWorldParams() {
-        DEBUG("solvePnPRansac")
-        /* 转化成相对原始图幅大小的像素坐标 */
-        std::vector<cv::Point2d> gPixelPts2f;
-        gPixelPts2f.reserve(4);  //灯条矩形的四个边角点坐标
-        for (int i = 0; i < 4; ++i) {
-            gPixelPts2f.emplace_back(cv::Point2d(pixelPts2f[i]) + cv::Point2d(stFrameInfo.offset));
-        }
-        CV_Assert(!stCamera.camMat.empty());
-
-        // 存在两种尺寸装甲板
-        //如果处于小装甲板模式，使用装甲板物理参数smallFig3f；否则使用装甲板物理参数largeFig3f
-        //之后对灯条矩形进行solvePnP,得出对应的旋转向量r,偏移向量t
-        if (type == TARGET_SMALL)
-            cv::solvePnP(stArmorStdFigure.smallFig3f, gPixelPts2f, stCamera.camMat, stCamera.distCoeffs, rv, tv);
-        else
-            cv::solvePnP(stArmorStdFigure.largeFig3f, gPixelPts2f, stCamera.camMat, stCamera.distCoeffs, rv, tv);
-
-        //罗德里格斯变换，为计算角度做准备
-        cv::Rodrigues(rv, rvMat);  //将旋转向量变换成旋转矩阵
 
         /**
-         * TODO: 先将世界坐标系转到相机坐标系，再将相机坐标系变换到云台坐标系(mm) 
-         * 因为需要计算的弹道，所以需要获取云台炮口的坐标
-         * 
-         * 我们以上步骤获得了相机坐标系的一系列参数（原点是摄像机光心）
-         * 从相机坐标到云台坐标其实就是经过了一个物理空间上的位移
-         * 这个位移我们可以实际测量出来，因为实际上因为相机和炮口由于不可抗的物理因素使得两者处于上下放置关系
-         * 所以我们相机坐标原点到云台坐标原点只需要z坐标补偿一个相对距离（mm）
+         * 移动构造函数
+         * @param t 
          */
-        cv::Mat ptsInCamera_Mat = rvMat * stArmorStdFigure.smallShootPosition + tv;  //世界坐标系转到相机坐标系
-        DEBUG("ptsInCamera_Mat")
-        ptsInGimbal.x = ptsInCamera_Mat.at<double>(0, 0);
-        ptsInGimbal.y = ptsInCamera_Mat.at<double>(0, 1) - 55;
-        ptsInGimbal.z = ptsInCamera_Mat.at<double>(0, 2) - 25;  //云台和相机光心的垂直坐标补偿(mm)
-        DEBUG("calcWorldParams end")
-    }
+        Target(Target &&t) : rPitch(t.rPitch), rYaw(t.rYaw), rTick(t.rTick), type(t.type),
+                             pixelPts2f(std::move(t.pixelPts2f)),
+                             pixelCenterPt2f(std::move(t.pixelCenterPt2f)),
+                             pixelPts2f_Ex(std::move(t.pixelPts2f_Ex)),
+                             ptsInGimbal(std::move(t.ptsInGimbal)),
+                             ptsInWorld(std::move(t.ptsInWorld)),
+                             ptsInWorld_Predict(std::move(t.ptsInWorld_Predict)),
+                             ptsInGimbal_Predict(std::move(t.ptsInGimbal_Predict)),
+                             ptsInShoot(std::move(t.ptsInShoot)),
+                             rv(std::move(t.rv)), tv(std::move(t.tv)), rvMat(std::move(t.rvMat)),
+                             m_rotY(std::move(t.m_rotY)), m_rotX(std::move(t.m_rotX)), vInGimbal3d(std::move(t.vInGimbal3d)) {}
 
-    /**
-     * 欧拉角转世界坐标点
-     * @param gYaw_
-     * @param gPitch_
-     * @change m_rotY, m_rotX
-     * @change ptsInWorld 世界坐标
-     */
-    void convert2WorldPts(float gYaw_, float gPitch_) {
-        //单位转换，弧度转度
-        gYaw_ = gYaw_ * M_PI / (180.0);
-        gPitch_ = gPitch_ * M_PI / (180.0);
-
-        /* yaw 为绕y轴旋转的 */
-        m_rotY = (cv::Mat_<double>(3, 3) << std::cos(gYaw_), 0, std::sin(gYaw_),
-            0, 1, 0,
-            -std::sin(gYaw_), 0, std::cos(gYaw_));
-
-        /* pitch 为绕x轴旋转的 */
-        m_rotX = (cv::Mat_<double>(3, 3) << 1, 0, 0,
-            0, std::cos(gPitch_), -std::sin(gPitch_),
-            0, std::sin(gPitch_), std::cos(gPitch_));
-
-        /* 先绕动系y轴旋转, 再绕动系x轴旋转 */
-        cv::Mat _pts = (cv::Mat_<double>(3, 1) << ptsInGimbal.x, ptsInGimbal.y, ptsInGimbal.z);
-        cv::Mat ptsInWorldMat = m_rotY * m_rotX * _pts;
-        ptsInWorld.x = ptsInWorldMat.at<double>(0);
-        ptsInWorld.y = ptsInWorldMat.at<double>(1);
-        ptsInWorld.z = ptsInWorldMat.at<double>(2);
-
-        DEBUG("convert2WorldPts end")
-    }
-
-    /**
-     * @param cv::Point3d &v 世界坐标点
-     * 世界坐标点转云台坐标点
-     */
-    void convert2GimbalPts(cv::Point3d &v) {
-        //创建一个3x1矩阵并将物体在预测后的世界坐标系下坐标放入
-        cv::Mat _pts = (cv::Mat_<double>(3, 1) << ptsInWorld_Predict.x, ptsInWorld_Predict.y, ptsInWorld_Predict.z);
-        //convert2WorldPts获得的m_rotY,m_rotX取逆
-        cv::Mat m_rotY_inv = m_rotY.inv();
-        cv::Mat m_rotX_inv = m_rotX.inv();
-        //创建一个3x1矩阵并将世界坐标点放入
-        cv::Mat _v_Mat = (cv::Mat_<double>(3, 1) << v.x, v.y, v.z);
-        //世界坐标->云台坐标转换
-        cv::Mat ptsInGimbal_PredictMat = m_rotY_inv * m_rotX_inv * _pts;
-        cv::Mat vInGimbal = m_rotY_inv * m_rotX_inv * _v_Mat;
-        vInGimbal3d.x = vInGimbal.at<double>(0);
-        vInGimbal3d.y = vInGimbal.at<double>(1);
-        vInGimbal3d.z = vInGimbal.at<double>(2);
-        ptsInGimbal_Predict.x = ptsInGimbal_PredictMat.at<double>(0);
-        ptsInGimbal_Predict.y = ptsInGimbal_PredictMat.at<double>(1);
-        ptsInGimbal_Predict.z = ptsInGimbal_PredictMat.at<double>(2);
-    }
-
-    /**
-     */
-    void correctTrajectory_and_calcEuler() {
-        /* 弹道修正, TODO */
-        stCamera.correctTrajectory(ptsInGimbal, ptsInShoot);  //重力补偿修正
-        DEBUG("stCamera.correctTrajectory")
-        /* 计算欧拉角 */
-        Camera::convertPts2Euler(ptsInShoot, &rYaw, &rPitch);  //计算Pitch,Yaw传递给电控
-        DEBUG("Camera::convertPts2Euler")
-    }
-};  // end struct Target
-
-/* PID控制算法 */
-class PID {
-  private:
-    double m_p, m_i, m_d;
-    double m_sum;
-    double lastError;
-    int64_t lastTimeStamp;
-    std::atomic_bool isFirst;
-    std::mutex m_mutex;
-
-    double limit(double in, double low, double up) { return in > up ? up : (in < low ? low : in); }
-
-  public:
-    explicit PID() : m_p(0), m_i(0), m_d(0), m_sum(0), lastError(0), lastTimeStamp(0), isFirst(true) {}
-
-    /**
-     *
-     * @param p 比例
-     * @param i 积分
-     * @param d 微分
-     */
-    void init(double p, double i, double d) {
-        m_p = (p);
-        m_i = (i);
-        m_d = (d);
-    }
-
-    /**
-     * @param error 
-     * @param timestamp 时间戳
-     * func 对ryaw进行pid控制修正
-     * @return out
-     */
-    double calc(double error, int64_t timeStamp) {
-        std::lock_guard<std::mutex> lockGuard(m_mutex);  //互斥锁
-        double out = error;
-        if (!isFirst) {
-            if (lastError * error < 0)
-                m_sum = 0;
-            m_sum += error;
-            m_sum = limit(m_sum, -500, 500);                      //msum>=-500
-            double dt = (timeStamp - lastTimeStamp) / 1000000.0;  //s
-            dt = limit(dt, 0, 0.010);                             //保证ts>=0
-            assert(dt > 0);
-            out = error * m_p + m_sum * m_i * dt + (error - lastError) * m_d / dt;
-        } else {
-            isFirst = false;
-            m_sum = 0;
+        /**
+         * @param a 左上（从左上开始顺时针设置）
+         * @param b 左下
+         * @param c 右下
+         * @param d 右上
+         * @param startPt 开小图模式下的偏移量
+         * 设置硬件ROI图幅下的像素坐标,计算ROI像素中心点坐标
+         */
+        void setPixelPts(const cv::Point2f &a, const cv::Point2f &b, const cv::Point2f &c, const cv::Point2f &d, const cv::Point2i &startPt) {
+            cv::Point2f startPt2f = cv::Point2f(startPt);
+            //计算硬件ROI图幅下的像素坐标
+            pixelPts2f = std::vector<cv::Point2f>{a + startPt2f, b + startPt2f, c + startPt2f, d + startPt2f};
+            //逐个遍历，将像素坐标累积求和
+            for (const auto &pt : pixelPts2f) {
+                pixelCenterPt2f += pt;
+            }
+            //像素坐标和/坐标数=像素中心点坐标
+            pixelCenterPt2f /= int(pixelPts2f.size());
         }
-        lastError = error;
-        lastTimeStamp = timeStamp;
-        return limit(out, -5, 5);  //out>=-5
-    }
 
-    double clear() {
-        isFirst.exchange(true);
-    }
-};
+        /**
+         * @return false = 扩展后超过硬件ROI图幅大小
+         * 将灯条拓展，如果拓展后超范围，返回false,否则返回true
+         */
+        bool convert2ExternalPts2f() {
+            //清除掉扩展像素坐标向量的元素，不释放内存
+            pixelPts2f_Ex.clear();
+            cv::Point2f halfDeltaA = (pixelPts2f[0] - pixelPts2f[1]) / 55 * 35;
+            pixelPts2f_Ex.emplace_back(pixelPts2f[0] + halfDeltaA);
+            pixelPts2f_Ex.emplace_back(pixelPts2f[1] - halfDeltaA);
+            cv::Point2f halfDeltaB = (pixelPts2f[3] - pixelPts2f[2]) / 55 * 35;
+            pixelPts2f_Ex.emplace_back(pixelPts2f[2] - halfDeltaB);
+            pixelPts2f_Ex.emplace_back(pixelPts2f[3] + halfDeltaB);
 
-/**
- * 卡尔曼滤波线性预测
- * 状态量: [x, y, z, Delta_x, Delta_y, Delta_z]'
- * 观测量: [x, y, z]
- * 非线程安全
- */
-class Kalman {
-    cv::KalmanFilter m_kf;
-    cv::Mat m_measurement = cv::Mat::zeros(3, 1, CV_32F);
-    int64_t m_lastTimeStamp;
+            for (const auto &_pt : pixelPts2f_Ex) {
+                //扩展后像素坐标超过采集的图像的图幅大小
+                if (_pt.x >= stFrameInfo.size.width || _pt.x < 0 || _pt.y >= stFrameInfo.size.height || _pt.y < 0)
+                    return false;
+            }
+            return true;
+        }
 
-  public:
-    cv::Point3d velocity;
+        /**
+         * 计算云台坐标系坐标
+         * @change ptsInGimbal 目标在云台坐标系下的坐标
+         */
+        void calcWorldParams() {
+            DEBUG("solvePnPRansac")
+            /* 转化成相对原始图幅大小的像素坐标 */
+            std::vector<cv::Point2d> gPixelPts2f;
+            gPixelPts2f.reserve(4);  //灯条矩形的四个边角点坐标
+            for (int i = 0; i < 4; ++i) {
+                gPixelPts2f.emplace_back(cv::Point2d(pixelPts2f[i]) + cv::Point2d(stFrameInfo.offset));
+            }
+            CV_Assert(!stCamera.camMat.empty());
 
-    explicit Kalman() : m_lastTimeStamp(0) {
-        m_kf.init(6, 3, 0);
-        m_kf.transitionMatrix = (cv::Mat_<float>(6, 6)
-                                     << 1,
-            0, 0, 1, 0, 0,
-            0, 1, 0, 0, 1, 0,
-            0, 0, 1, 0, 0, 1,
-            0, 0, 0, 1, 0, 0,
-            0, 0, 0, 0, 1, 0,
-            0, 0, 0, 0, 0, 1);
-        setIdentity(m_kf.measurementMatrix);                           //观测模型
-        setIdentity(m_kf.processNoiseCov, cv::Scalar::all(1e-5));      //过程噪声
-        setIdentity(m_kf.measurementNoiseCov, cv::Scalar::all(1e-1));  //观测噪声
-        setIdentity(m_kf.errorCovPost, cv::Scalar::all(1));            //预测估计协方差矩阵
-    }
+            // 存在两种尺寸装甲板
+            //如果处于小装甲板模式，使用装甲板物理参数smallFig3f；否则使用装甲板物理参数largeFig3f
+            //之后对灯条矩形进行solvePnP,得出对应的旋转向量r,偏移向量t
+            if (type == TARGET_SMALL)
+                cv::solvePnP(stArmorStdFigure.smallFig3f, gPixelPts2f, stCamera.camMat, stCamera.distCoeffs, rv, tv);
+            else
+                cv::solvePnP(stArmorStdFigure.largeFig3f, gPixelPts2f, stCamera.camMat, stCamera.distCoeffs, rv, tv);
+
+            //罗德里格斯变换，为计算角度做准备
+            cv::Rodrigues(rv, rvMat);  //将旋转向量变换成旋转矩阵
+
+            /**
+             * TODO: 先将世界坐标系转到相机坐标系，再将相机坐标系变换到云台坐标系(mm) 
+             * 因为需要计算的弹道，所以需要获取云台炮口的坐标
+             * 
+             * 我们以上步骤获得了相机坐标系的一系列参数（原点是摄像机光心）
+             * 从相机坐标到云台坐标其实就是经过了一个物理空间上的位移
+             * 这个位移我们可以实际测量出来，因为实际上因为相机和炮口由于不可抗的物理因素使得两者处于上下放置关系
+             * 所以我们相机坐标原点到云台坐标原点只需要z坐标补偿一个相对距离（mm）
+             */
+            cv::Mat ptsInCamera_Mat = rvMat * stArmorStdFigure.smallShootPosition + tv;  //世界坐标系转到相机坐标系
+            DEBUG("ptsInCamera_Mat")
+            ptsInGimbal.x = ptsInCamera_Mat.at<double>(0, 0);
+            ptsInGimbal.y = ptsInCamera_Mat.at<double>(0, 1) - 55;
+            ptsInGimbal.z = ptsInCamera_Mat.at<double>(0, 2) - 25;  //云台和相机光心的垂直坐标补偿(mm)
+            DEBUG("calcWorldParams end")
+        }
+
+        /**
+         * 欧拉角转世界坐标点
+         * @param gYaw_
+         * @param gPitch_
+         * @change m_rotY, m_rotX
+         * @change ptsInWorld 世界坐标
+         */
+        void convert2WorldPts(float gYaw_, float gPitch_) {
+            //单位转换，弧度转度
+            gYaw_ = gYaw_ * M_PI / (180.0);
+            gPitch_ = gPitch_ * M_PI / (180.0);
+
+            /* yaw 为绕y轴旋转的 */
+            m_rotY = (cv::Mat_<double>(3, 3) << std::cos(gYaw_), 0, std::sin(gYaw_),
+                0, 1, 0,
+                -std::sin(gYaw_), 0, std::cos(gYaw_));
+
+            /* pitch 为绕x轴旋转的 */
+            m_rotX = (cv::Mat_<double>(3, 3) << 1, 0, 0,
+                0, std::cos(gPitch_), -std::sin(gPitch_),
+                0, std::sin(gPitch_), std::cos(gPitch_));
+
+            /* 先绕动系y轴旋转, 再绕动系x轴旋转 */
+            cv::Mat _pts = (cv::Mat_<double>(3, 1) << ptsInGimbal.x, ptsInGimbal.y, ptsInGimbal.z);
+            cv::Mat ptsInWorldMat = m_rotY * m_rotX * _pts;
+            ptsInWorld.x = ptsInWorldMat.at<double>(0);
+            ptsInWorld.y = ptsInWorldMat.at<double>(1);
+            ptsInWorld.z = ptsInWorldMat.at<double>(2);
+
+            DEBUG("convert2WorldPts end")
+        }
+
+        /**
+         * @param cv::Point3d &v 世界坐标点
+         * 世界坐标点转云台坐标点
+         */
+        void convert2GimbalPts(cv::Point3d &v) {
+            //创建一个3x1矩阵并将物体在预测后的世界坐标系下坐标放入
+            cv::Mat _pts = (cv::Mat_<double>(3, 1) << ptsInWorld_Predict.x, ptsInWorld_Predict.y, ptsInWorld_Predict.z);
+            //convert2WorldPts获得的m_rotY,m_rotX取逆
+            cv::Mat m_rotY_inv = m_rotY.inv();
+            cv::Mat m_rotX_inv = m_rotX.inv();
+            //创建一个3x1矩阵并将世界坐标点放入
+            cv::Mat _v_Mat = (cv::Mat_<double>(3, 1) << v.x, v.y, v.z);
+            //世界坐标->云台坐标转换
+            cv::Mat ptsInGimbal_PredictMat = m_rotY_inv * m_rotX_inv * _pts;
+            cv::Mat vInGimbal = m_rotY_inv * m_rotX_inv * _v_Mat;
+            vInGimbal3d.x = vInGimbal.at<double>(0);
+            vInGimbal3d.y = vInGimbal.at<double>(1);
+            vInGimbal3d.z = vInGimbal.at<double>(2);
+            ptsInGimbal_Predict.x = ptsInGimbal_PredictMat.at<double>(0);
+            ptsInGimbal_Predict.y = ptsInGimbal_PredictMat.at<double>(1);
+            ptsInGimbal_Predict.z = ptsInGimbal_PredictMat.at<double>(2);
+        }
+
+        void correctTrajectory_and_calcEuler() {
+            /* 弹道修正, TODO */
+            stCamera.correctTrajectory(ptsInGimbal, ptsInShoot);  //重力补偿修正
+            DEBUG("stCamera.correctTrajectory")
+            /* 计算欧拉角 */
+            Camera::convertPts2Euler(ptsInShoot, &rYaw, &rPitch);  //计算Pitch,Yaw传递给电控
+            DEBUG("Camera::convertPts2Euler")
+        }
+    };  // end struct Target
+
+    /* PID控制算法 */
+    class PID {
+      private:
+        double m_p, m_i, m_d;
+        double m_sum;
+        double lastError;
+        int64_t lastTimeStamp;
+        std::atomic_bool isFirst;
+        std::mutex m_mutex;
+
+        double limit(double in, double low, double up) { return in > up ? up : (in < low ? low : in); }
+
+      public:
+        explicit PID() : m_p(0), m_i(0), m_d(0), m_sum(0), lastError(0), lastTimeStamp(0), isFirst(true) {}
+
+        /**
+         *
+         * @param p 比例
+         * @param i 积分
+         * @param d 微分
+         */
+        void init(double p, double i, double d) {
+            m_p = (p);
+            m_i = (i);
+            m_d = (d);
+        }
+
+        /**
+         * @param error 
+         * @param timestamp 时间戳
+         * func 对ryaw进行pid控制修正
+         * @return out
+         */
+        double calc(double error, int64_t timeStamp) {
+            std::lock_guard<std::mutex> lockGuard(m_mutex);  //互斥锁
+            double out = error;
+            if (!isFirst) {
+                if (lastError * error < 0)
+                    m_sum = 0;
+                m_sum += error;
+                m_sum = limit(m_sum, -500, 500);                      //msum>=-500
+                double dt = (timeStamp - lastTimeStamp) / 1000000.0;  //s
+                dt = limit(dt, 0, 0.010);                             //保证ts>=0
+                assert(dt > 0);
+                out = error * m_p + m_sum * m_i * dt + (error - lastError) * m_d / dt;
+            } else {
+                isFirst = false;
+                m_sum = 0;
+            }
+            lastError = error;
+            lastTimeStamp = timeStamp;
+            return limit(out, -5, 5);  //out>=-5
+        }
+
+        double clear() {
+            isFirst.exchange(true);
+        }
+    };
+
     /**
-     * @param pos 输入三维坐标 
-     * @param timestamp 时间戳
-     * func 卡尔曼滤波清零初始化
+     * 卡尔曼滤波线性预测
+     * 状态量: [x, y, z, Delta_x, Delta_y, Delta_z]'
+     * 观测量: [x, y, z]
+     * 非线程安全
      */
-    void clear_and_init(cv::Point3d &pos, int64_t timeStamp) {
-        m_kf.transitionMatrix = (cv::Mat_<float>(6, 6)
-                                     << 1,
-            0, 0, 1, 0, 0,
-            0, 1, 0, 0, 1, 0,
-            0, 0, 1, 0, 0, 1,
-            0, 0, 0, 1, 0, 0,
-            0, 0, 0, 0, 1, 0,
-            0, 0, 0, 0, 0, 1);
-        setIdentity(m_kf.measurementMatrix);
-        setIdentity(m_kf.processNoiseCov, cv::Scalar::all(1e-5));
-        setIdentity(m_kf.measurementNoiseCov, cv::Scalar::all(1e-1));
-        setIdentity(m_kf.errorCovPost, cv::Scalar::all(1));
+    class Kalman {
+        cv::KalmanFilter m_kf;
+        cv::Mat m_measurement = cv::Mat::zeros(3, 1, CV_32F);
+        int64_t m_lastTimeStamp;
 
-        m_kf.statePost = (cv::Mat_<float>(6, 1) << pos.x, pos.y, pos.z, 0, 0, 0);
-        m_lastTimeStamp = timeStamp;
-    }
+      public:
+        cv::Point3d velocity;
 
-    /**
-     * @param pos 三维坐标
-     * @param timeStamp 微秒
-     * 卡尔曼修正函数
-     */
-    void correct(cv::Point3d &pos, int64_t timeStamp) {
-        /* 计算时间差 */
-        float deltaT = (timeStamp - m_lastTimeStamp) / 10000.0;  //s*100
-        assert(deltaT > 0);
-        m_lastTimeStamp = timeStamp;
+        explicit Kalman() : m_lastTimeStamp(0) {
+            m_kf.init(6, 3, 0);
+            m_kf.transitionMatrix = (cv::Mat_<float>(6, 6)
+                                         << 1,
+                0, 0, 1, 0, 0,
+                0, 1, 0, 0, 1, 0,
+                0, 0, 1, 0, 0, 1,
+                0, 0, 0, 1, 0, 0,
+                0, 0, 0, 0, 1, 0,
+                0, 0, 0, 0, 0, 1);
+            setIdentity(m_kf.measurementMatrix);                           //观测模型
+            setIdentity(m_kf.processNoiseCov, cv::Scalar::all(1e-5));      //过程噪声
+            setIdentity(m_kf.measurementNoiseCov, cv::Scalar::all(1e-1));  //观测噪声
+            setIdentity(m_kf.errorCovPost, cv::Scalar::all(1));            //预测估计协方差矩阵
+        }
+        /**
+         * @param pos 输入三维坐标 
+         * @param timestamp 时间戳
+         * func 卡尔曼滤波清零初始化
+         */
+        void clear_and_init(cv::Point3d &pos, int64_t timeStamp) {
+            m_kf.transitionMatrix = (cv::Mat_<float>(6, 6)
+                                         << 1,
+                0, 0, 1, 0, 0,
+                0, 1, 0, 0, 1, 0,
+                0, 0, 1, 0, 0, 1,
+                0, 0, 0, 1, 0, 0,
+                0, 0, 0, 0, 1, 0,
+                0, 0, 0, 0, 0, 1);
+            setIdentity(m_kf.measurementMatrix);
+            setIdentity(m_kf.processNoiseCov, cv::Scalar::all(1e-5));
+            setIdentity(m_kf.measurementNoiseCov, cv::Scalar::all(1e-1));
+            setIdentity(m_kf.errorCovPost, cv::Scalar::all(1));
 
-        /* 更新状态转移矩阵 */
-        m_kf.transitionMatrix = (cv::Mat_<float>(6, 6)
-                                     << 1,
-            0, 0, deltaT, 0, 0,
-            0, 1, 0, 0, deltaT, 0,
-            0, 0, 1, 0, 0, deltaT,
-            0, 0, 0, 1, 0, 0,
-            0, 0, 0, 0, 1, 0,
-            0, 0, 0, 0, 0, 1);
-        m_measurement.at<float>(0) = (float)pos.x;
-        m_measurement.at<float>(1) = (float)pos.y;
-        m_measurement.at<float>(2) = (float)pos.z;
-        m_kf.correct(m_measurement);
-    }
+            m_kf.statePost = (cv::Mat_<float>(6, 1) << pos.x, pos.y, pos.z, 0, 0, 0);
+            m_lastTimeStamp = timeStamp;
+        }
 
-    /**
-     * @param delay 秒
-     * @param predictRelativePos 预测坐标
-     */
-    void predict(float delay, cv::Point3d &predictRelativePos) {
-        cv::Mat prediction = m_kf.predict();
-        velocity = cv::Point3d(prediction.at<float>(3), prediction.at<float>(4), prediction.at<float>(5));
-        predictRelativePos.x = prediction.at<float>(0) + delay * prediction.at<float>(3);
-        predictRelativePos.y = prediction.at<float>(1) + delay * prediction.at<float>(4);
-        predictRelativePos.z = prediction.at<float>(2) + delay * prediction.at<float>(5);
-    }
-};
+        /**
+         * @param pos 三维坐标
+         * @param timeStamp 微秒
+         * 卡尔曼修正函数
+         */
+        void correct(cv::Point3d &pos, int64_t timeStamp) {
+            /* 计算时间差 */
+            float deltaT = (timeStamp - m_lastTimeStamp) / 10000.0;  //s*100
+            assert(deltaT > 0);
+            m_lastTimeStamp = timeStamp;
+
+            /* 更新状态转移矩阵 */
+            m_kf.transitionMatrix = (cv::Mat_<float>(6, 6)
+                                         << 1,
+                0, 0, deltaT, 0, 0,
+                0, 1, 0, 0, deltaT, 0,
+                0, 0, 1, 0, 0, deltaT,
+                0, 0, 0, 1, 0, 0,
+                0, 0, 0, 0, 1, 0,
+                0, 0, 0, 0, 0, 1);
+            m_measurement.at<float>(0) = (float)pos.x;
+            m_measurement.at<float>(1) = (float)pos.y;
+            m_measurement.at<float>(2) = (float)pos.z;
+            m_kf.correct(m_measurement);
+        }
+
+        /**
+         * @param delay 秒
+         * @param predictRelativePos 预测坐标
+         */
+        void predict(float delay, cv::Point3d &predictRelativePos) {
+            cv::Mat prediction = m_kf.predict();
+            velocity = cv::Point3d(prediction.at<float>(3), prediction.at<float>(4), prediction.at<float>(5));
+            predictRelativePos.x = prediction.at<float>(0) + delay * prediction.at<float>(3);
+            predictRelativePos.y = prediction.at<float>(1) + delay * prediction.at<float>(4);
+            predictRelativePos.z = prediction.at<float>(2) + delay * prediction.at<float>(5);
+        }
+    };
 }  // namespace armor
 
 #endif  //ATTACK_BASE_HPP
