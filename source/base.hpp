@@ -85,19 +85,19 @@ struct Camera {
     bool isTest = false;
     bool isLinear = false;
     /**
- * 折线弹道
- */
+     * 折线弹道
+     */
     struct ShootLines {
         //array存储 x(i),x(i+1),k,b
         std::vector<std::array<double, 4>> m_lhkb;
         explicit ShootLines() {}
 
         /**
-     * y = k * x + b
-     * @param y2x   
-     * 折线拟合函数
-     * [2000, -100]  [3000, -150], [2200, ]
-     */
+         * y = k * x + b
+         * @param y2x   
+         * 折线拟合函数
+         * [2000, -100]  [3000, -150], [2200, ]
+         */
         void fit(std::deque<cv::Point2f> &y2x) {
             /*y2x升序排序，逐次比较x*/
             std::sort(y2x.begin(), y2x.end(), [](cv::Point2f &a, cv::Point2f &b) -> bool {
@@ -116,9 +116,9 @@ struct Camera {
     } m_stShootLines_x, m_stShootLines_y;
 
     /**
- * @param path 相机参数文件路径
- * 结构体构造函数
- */
+     * @param path 相机参数文件路径
+     * 结构体构造函数
+     */
     explicit Camera(const cv::String &path) {
         /* 读取相机标定文件 */
         cv::FileStorage fs(path, cv::FileStorage::READ);
@@ -147,13 +147,13 @@ struct Camera {
     }
 
     /**
- * Left * ABC = Right
- * z ^ 2 * A + z * B + C = dy
- * @param disToY [[x_0, y_0], [x_1, y_1], ...]
- * @param degree 多项式次数
- * @param ABC 拟合结果
- * 多项式曲线拟合
- */
+     * Left * ABC = Right
+     * z ^ 2 * A + z * B + C = dy
+     * @param disToY [[x_0, y_0], [x_1, y_1], ...]
+     * @param degree 多项式次数
+     * @param ABC 拟合结果
+     * 多项式曲线拟合
+     */
     static void curveFit(std::deque<cv::Point3f> &disToY, int degree, cv::Mat &ABC) {
         size_t funNum = disToY.size();
         cv::Mat Left = cv::Mat::zeros(funNum, 6, CV_32F);
@@ -166,29 +166,29 @@ struct Camera {
                 }
                 Right.at<float>(i, 0) = disToY[i].z;
             }
-            cv::solve(Left, Right, ABC, cv::DECOMP_SVD);
         }
+        cv::solve(Left, Right, ABC, cv::DECOMP_SVD);
     }
 
     /**
- * @param pts 三维坐标
- * @param pYaw
- * @param pPitch
- * 三维坐标转欧拉角工具函数
- */
+     * @param pts 三维坐标
+     * @param pYaw
+     * @param pPitch
+     * 三维坐标转欧拉角工具函数
+     */
     static void convertPts2Euler(cv::Point3d &pts, float *pYaw, float *pPitch) {
         float _pitch = cv::fastAtan2(pts.y, cv::sqrt(pts.x * pts.x + pts.z * pts.z));
         float _yaw = cv::fastAtan2(pts.x, cv::sqrt(pts.y * pts.y + pts.z * pts.z));
         _pitch = _pitch > 180 ? _pitch - 360 : _pitch;
-     *pPitch = -_pitch;
-     *pYaw = _yaw > 180 ? _yaw - 360 : _yaw;
+        *pPitch = -_pitch;
+        *pYaw = _yaw > 180 ? _yaw - 360 : _yaw;
     }
 
     /**
- * @param pts 原始坐标值
- * @param newPts 修正后坐标值
- * 考虑到重力对子弹的影响，对云台所需仰角进行补偿
- */
+     * @param pts 原始坐标值
+     * @param newPts 修正后坐标值
+     * 考虑到重力对子弹的影响，对云台所需仰角进行补偿
+     */
     void correctTrajectory(cv::Point3d &pts, cv::Point3d &newPts) {
         if (isTest) {
             newPts.x = pts.x + armor::stConfig.get<int>("curve.test-dx");
