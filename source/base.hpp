@@ -138,7 +138,7 @@ struct Camera {
         std::deque<cv::Point3f> disToX;
         for (auto &_pts : armor::stConfig.get<toml::Array>("curve.dx")) {
             std::vector<toml::Value> a = _pts.as<std::vector<toml::Value>>();
-            cv::Point3f pt = cv::Point2f(a[0].asNumber(), a[1].asNumber(), a[2].asNumber());
+            cv::Point3f pt = cv::Point3f(a[0].asNumber(), a[1].asNumber(), a[2].asNumber());
             disToX.emplace_back(pt);
         }
         /* 多项式曲线拟合 */
